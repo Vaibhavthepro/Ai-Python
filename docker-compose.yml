@@ -1,0 +1,82 @@
+version: "3.9"
+
+services:
+  frontend:
+    build: 
+      context: ./frontend
+    ports: 
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
+    depends_on: 
+      - backend
+    restart: unless-stopped
+
+  backend:
+    build: 
+      context: ./backend
+    ports: 
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://app:app@postgres:5432/appdb
+      - REDIS_URL=redis://redis:6379/0
+      - STORAGE_BACKEND=local
+      - LOCAL_STORAGE_PATH=/app/storage
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock   # required to spawn sandbox containers
+      - storage_data:/app/storage
+    depends_on: 
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  executor-worker:
+    build: 
+      context: ./backend
+    command: ["celery", "-A", "app.worker", "worker", "--loglevel=info"]
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://app:app@postgres:5432/appdb
+      - REDIS_URL=redis://redis:6379/0
+      - STORAGE_BACKEND=local
+      - LOCAL_STORAGE_PATH=/app/storage
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - storage_data:/app/storage
+    depends_on: 
+      - redis
+      - backend
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=app
+      - POSTGRES_PASSWORD=app
+      - POSTGRES_DB=appdb
+    volumes: 
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d appdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  storage_data:
